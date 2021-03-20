@@ -10,7 +10,7 @@ const SLIME_JUMP_VELOCITY = 2.9;
 const SLIME_FASTFALL_VELOCITY = 4.5;
 const FUDGE_FACTOR = 5;
 
-const POLL_RATE = 60;
+const POLL_RATE = 45;
 const VELOCITY_FIXER = 1000;
 let poller = 0;
 
@@ -64,10 +64,13 @@ socket.on('joinData', (data) => {
 
 socket.on("requestOpponentColor", (data) => {
     opponentSlime.color = data.color;
-    socket.emit('fulfillColorRequest', {code: code, color: playerColor});
+    socket.emit('fulfillColorRequest', {code: code, color: playerColor, side: playerSlime.left});
 });
 
 socket.on("fulfillColorRequest", (data) => {
+    opponentSlime.left = data.side;
+    playerSlime.left = !data.side;
+    playerSlime.x = playerSlime.left ? 200 : 800;
     opponentSlime.color = data.color;
 });
 
@@ -109,7 +112,25 @@ socket.on('frameUpdate', (data) => {
 socket.on('reportScore', (data) => {
     scores = data.scores;
     scoreRedirect();
-    initRound(data.leftWon);
+    ball.x = data.ball.x;
+    ball.y = data.ball.y;
+    ball.velocityX = data.ball.velocityX;
+    ball.velocityY = data.ball.velocityY;
+
+    const playerX = playerSlime.left ? 200 : 800;
+    const oppX = opponentSlime.left ? 200 : 800;
+
+    playerSlime.x = playerX;
+    playerSlime.y = 0;
+    opponentSlime.x = oppX;
+    opponentSlime.y = 0;
+
+    playerSlime.velocityX = 0;
+    playerSlime.velocityY = 0;
+    opponentSlime.velocityX = 0;
+    opponentSlime.velocityY = 0;
+    
+    updateBall(Date.now() - data.timestamp);
 });
 
 /**
@@ -277,11 +298,6 @@ function collisionBallSlime(slime) {
         if (something <= 1) {
             ball.velocityX += (Math.trunc((slime.velocityX * VELOCITY_FIXER) - 2 * dx * something / dist));
             ball.velocityY += (Math.trunc((slime.velocityY * VELOCITY_FIXER) - 2 * dy * something / dist));
-            /**let magnitude = Math.sqrt((ball.velocityX * ball.velocityX) + (ball.velocityY * ball.velocityY));
-            if (magnitude < MIN_MAG && magnitude != 0) {
-                ball.velocityX *= (MIN_MAG/magnitude);
-                ball.velocityY *= (MIN_MAG/magnitude);
-            }*/
             if (ball.velocityX < -MAX_VELOCITY_X) ball.velocityX = -MAX_VELOCITY_X;
             else if (ball.velocityX > MAX_VELOCITY_X) ball.velocityX = MAX_VELOCITY_X;
             if (ball.velocityY < -MAX_VELOCITY_Y) ball.velocityY = -MAX_VELOCITY_Y;
@@ -339,21 +355,22 @@ function updateBall(deltaTime) {
             return true;
         }
         // only let loser report score b/c rollback
-        if (ball.x > 500 && !playerSlime.left) {
+        if (ball.x >= 500 && !playerSlime.left) {
             leftWon = true;
             scores[0]++;
-            socket.emit('reportScore', {code: code, scores: scores, leftWon: leftWon});
             initRound(leftWon);
+            socket.emit('reportScore', {code: code, scores: scores, leftWon: leftWon, ball: ball, timestamp: currentTimestamp});
             //endPoint()
             return true;
         } else if (ball.x < 500 && playerSlime.left) {
             leftWon = false;
             scores[1]++;
-            socket.emit('reportScore', {code: code, scores: scores, leftWon: leftWon});
             initRound(leftWon);
+            socket.emit('reportScore', {code: code, scores: scores, leftWon: leftWon, ball: ball, timestamp: currentTimestamp});
             //endPoint()
             return true;
         }
+        
     }
     return false;
 }
@@ -509,14 +526,14 @@ function bodyload() {
     nextSlimeIndex = Math.floor(Math.random()*2);
 
     let playerColor = "#" + document.getElementById("player-color").value;
-    let playerLeft = Boolean(document.getElementById("player-left").value);
+    let playerLeft = document.getElementById("player-left").value == "true";
     // need slimeLeftColor && playerLeft from hidden html elements, decided in previous screen.
     playerSlime = newSlime(100, playerColor, playerLeft);
     opponentSlime = newSlime(100, "green", !playerLeft);
     ball = newBall(25, "#ff0");
 
-    playerSlime.x = 200;
-    ball.x = 200;
+    playerSlime.x = playerSlime.left ? 200 : 800;
+    ball.x = playerSlime.left ? 200 : 800;
     ball.y = 356;
 
     opponentSlime.x = -2000;
