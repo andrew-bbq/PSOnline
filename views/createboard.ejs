@@ -6,17 +6,19 @@
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
   </head>
   <body onload="randomColor()">
-    <h1>Welcome to ProjectS Online</h1>
-    <h4>I'm still working on the styling lol</h4>
-    <% if (err.length > 0) { %>
-      <div class="text-danger"><%= err %></div>
-    <% } %>
-    <form action="/" method="POST">
+    <h1>Code: <%= code %></h1>
+    <div>the code will become active once you hit the create button</div>
+    <form action="/createboard" method="POST">
       <label for="color">Slime Color:</label>
       <input required type="color" name="color" id="color" />
-      <label for="code">Code: </label>
-      <input required name="code" />
-      <input type="submit" name="submit" value="Join" />
+      <label for="side">Side: </label>
+      <select name="side">
+        <option value="left">Left</option>
+        <option value="right">Right</option>
+        <option value="random">Random</option>
+      </select>
+      <input type='hidden' required name="code" value='<%=code%>' />
+      <input type="submit" name="submit" value="Create" />
     </form>
     <hr>
     <a href="/createboard">Create new board</a>

@@ -1,16 +1,18 @@
 const WIN_THRESH = 7;
 
-const MAX_VELOCITY_X = 15;
-const MAX_VELOCITY_Y = 22;
+const MAX_VELOCITY_X = 1.05;
+const MAX_VELOCITY_Y = 2;
 
 const SLIME_GRAVITY = 0.01;
-const BALL_GRAVITY = -1;
+const BALL_GRAVITY = -0.006;
 const SLIME_HORIZONTAL_VELOCITY = 0.7;
-const SLIME_JUMP_VELOCITY = 3.5;
+const SLIME_JUMP_VELOCITY = 2.9;
 const SLIME_FASTFALL_VELOCITY = 4.5;
+const FUDGE_FACTOR = 5;
 
-// connection info
-let code;
+const POLL_RATE = 60;
+const VELOCITY_FIXER = 1000;
+let poller = 0;
 
 // render info
 let ctx;
@@ -33,6 +35,84 @@ let playerSlime;
 let opponentSlime;
 let scores = [0,0];
 let leftWon;
+
+let currentTimestamp = 0;
+
+let gameStarted = false;
+
+
+// socketio stuff
+let socket = io();
+const code = document.getElementById("game-code").value;
+let playerLeft = Boolean(document.getElementById("player-left").value);
+let playerColor = "#" + document.getElementById("player-color").value;
+
+socket.emit('join', {code:code, left: playerLeft, color: playerColor});
+
+socket.on('joinData', (data) => {
+    if (data.players.length == 2) {
+        playerSlime.left = !data.left;
+        playerSlime.x = playerSlime.left ? 200: 800;
+        const server = Boolean(Math.random() * 2);
+        socket.emit('startGame', {code: code, server: server, timestamp: Date.now(), color: playerColor});
+        socket.emit('requestOpponentColor', {code: code, color: playerColor});
+    }
+    if (data.players.length > 2) {
+        window.location.replace("/?err=gip");
+    }
+});
+
+socket.on("requestOpponentColor", (data) => {
+    console.log(data);
+    opponentSlime.color = data.color;
+    socket.emit('fulfillColorRequest', {code: code, color: playerColor});
+});
+
+socket.on("fulfillColorRequest", (data) => {
+    console.log(data);
+    opponentSlime.color = data.color;
+});
+
+socket.on('firstPoint', (data) => {
+    scores = [0,0];
+    if (!playerSlime.left) {
+        opponentSlime.left = true;
+    }
+    console.log("first point");
+    gameStarted = true;
+    initRound(data.server);
+    updateBall(Date.now() - data.timestamp);
+});
+
+socket.on('updateBall', (data) => {
+    ball.x = data.ball.x;
+    ball.y = data.ball.y;
+    ball.velocityX = data.ball.velocityX;
+    ball.velocityY = data.ball.velocityY;
+    updateBall(Date.now() - data.timestamp);
+})
+
+socket.on('frameUpdate', (data) => {
+    // if we didn't send this data
+    if (data.slime.left != playerSlime.left) {
+        // update opponent slime with data from opponent
+        const leftBound = playerSlime.left ? 555 : 50;
+        const rightBound = playerSlime.left ? 950 : 445;
+        opponentSlime.x = data.slime.x;
+        opponentSlime.y = data.slime.y;
+        opponentSlime.velocityX = data.slime.velocityX;
+        opponentSlime.velocityY = data.slime.velocityY;
+        if (Date.now > data.timestamp) {
+            updateSlime(opponentSlime, leftBound, rightBound, Date.now() - data.timestamp);
+        }
+    }
+});
+
+socket.on('reportScore', (data) => {
+    scores = data.scores;
+    scoreRedirect();
+    initRound(data.leftWon);
+});
 
 /**
  * Return new ball object with parameters
@@ -83,6 +163,29 @@ function newSlime(radius, color, left) {
             ctx.beginPath();
             ctx.arc(xPixels, yPixels, radiusPixels, Math.PI, Math.PI * 2);
             ctx.fill();
+
+            // draw eye
+            let eyeX = this.x +(this.left ? 1 : -1) * this.radius/4;
+            let eyeY = this.y +this.radius/2;
+            let eyeXPix = eyeX * pixelsPerUnitX;
+            let eyeYPix = courtYPixels - (eyeY * pixelsPerUnitY);
+            ctx.save();
+            ctx.translate(eyeXPix, eyeYPix);
+            ctx.fillStyle ="#fff";
+            ctx.beginPath();
+            ctx.arc(0,0, radiusPixels/4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // draw pupil
+            let dx = ball.x - eyeX;
+            let dy = eyeY-ball.y;
+            let dist = Math.sqrt(dx*dx+dy*dy);
+            let pupilRadius = radiusPixels/8;
+            ctx.fillStyle="black";
+            ctx.beginPath();
+            ctx.arc(pupilRadius*dx/dist, pupilRadius*dy/dist, pupilRadius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
         }
     };
 }
@@ -106,10 +209,12 @@ function updateSlimeVelocity(slime) {
     }
 
     //jumping
-    if (slime.y == 0 && (keysDown["ArrowUp"] || keysDown[" "])) {
+    if (slime.y == 0 && (keysDown["ArrowUp"] || keysDown[" "] || keysDown["w"])) {
         if (keysDown["ArrowUp"] && !wasPressed["ArrowUp"]) {
             slime.velocityY = SLIME_JUMP_VELOCITY;
         } else if (keysDown[" "] && !wasPressed[" "]) {
+            slime.velocityY = SLIME_JUMP_VELOCITY;
+        } else if (keysDown["w"] && !wasPressed["w"]) {
             slime.velocityY = SLIME_JUMP_VELOCITY;
         }
     }
@@ -123,6 +228,7 @@ function updateSlimeVelocity(slime) {
         }
     }
 
+    wasPressed["w"] = keysDown["w"];
     wasPressed["ArrowUp"] = keysDown["ArrowUp"];
     wasPressed[" "] = keysDown[" "];
     wasPressed["ArrowDown"] = keysDown["ArrowDown"];
@@ -134,25 +240,23 @@ function updateSlimeVelocity(slime) {
  * @param {array} slime Slime object as created in newSlime()
  * @param {int} leftLimit left bound for slime to stay within
  * @param {int} rightLimit right bound for slime to stay within
- * @param {int} timestamp for computing new position regardless of framerate
+ * @param {int} deltaTime for computing new position regardless of framerate
  */
-function updateSlime(slime, leftLimit, rightLimit, timestamp) {
+function updateSlime(slime, leftLimit, rightLimit, deltaTime) {
     if (slime.velocityX != 0) {
-        slime.x += (slime.velocityX * (timestamp-prevTimestamp));
+        slime.x += (slime.velocityX * (deltaTime));
         if(slime.x < leftLimit) slime.x = leftLimit;
         else if(slime.x > rightLimit) slime.x = rightLimit;
     }
     if (slime.velocityY != 0 || slime.y > 0) {
-        slime.velocityY -= (SLIME_GRAVITY * (timestamp-prevTimestamp));
-        slime.y += (slime.velocityY * (timestamp-prevTimestamp));
+        slime.y += (slime.velocityY * (deltaTime)) - (0.5 * SLIME_GRAVITY * (deltaTime)*(deltaTime));
+        slime.velocityY -= (SLIME_GRAVITY * (deltaTime));
         if (slime.y < 0) {
             slime.y = 0;
             slime.velocityY = 0;
         }
     }
 }
-
-const FUDGE_FACTOR = 5;
 
 /**
  * Check if ball is colliding with slime and update velocity if colliding (NEED TO HANDLE NETCODE HERE)
@@ -163,8 +267,8 @@ function collisionBallSlime(slime) {
     let dy = ball.y - slime.y;
     let dist = Math.trunc(Math.sqrt(dx*dx + dy*dy));
 
-    let dVelocityX = ball.VelocityX - slime.velocityX;
-    let dVelocityY = ball.velocityY - slime.velocityY;
+    let dVelocityX = (ball.velocityX * VELOCITY_FIXER) - (slime.velocityX * VELOCITY_FIXER);
+    let dVelocityY = (ball.velocityY * VELOCITY_FIXER) - (slime.velocityY * VELOCITY_FIXER);
 
     if (dy > 0 && dist < ball.radius + slime.radius && dist > FUDGE_FACTOR) {
         // go to edge of slime on collision
@@ -172,30 +276,38 @@ function collisionBallSlime(slime) {
         ball.y = slime.y + Math.trunc((slime.radius + ball.radius) * dy / dist);
 
         let something = Math.trunc((dx * dVelocityX + dy * dVelocityY) / dist);
-        if (something <= 0) {
-            ball.velocityX += Math.trunc(slime.velocityX - 2 * dx * something / dist);
-            ball.velocityY += Math.trunc(slime.velocityY - 2 * dy * something / dist);
+        if (something <= 1) {
+            ball.velocityX += (Math.trunc((slime.velocityX * VELOCITY_FIXER) - 2 * dx * something / dist));
+            ball.velocityY += (Math.trunc((slime.velocityY * VELOCITY_FIXER) - 2 * dy * something / dist));
+            /**let magnitude = Math.sqrt((ball.velocityX * ball.velocityX) + (ball.velocityY * ball.velocityY));
+            if (magnitude < MIN_MAG && magnitude != 0) {
+                ball.velocityX *= (MIN_MAG/magnitude);
+                ball.velocityY *= (MIN_MAG/magnitude);
+            }*/
             if (ball.velocityX < -MAX_VELOCITY_X) ball.velocityX = -MAX_VELOCITY_X;
             else if (ball.velocityX > MAX_VELOCITY_X) ball.velocityX = MAX_VELOCITY_X;
             if (ball.velocityY < -MAX_VELOCITY_Y) ball.velocityY = -MAX_VELOCITY_Y;
             else if (ball.velocityY > MAX_VELOCITY_Y) ball.velocityY = MAX_VELOCITY_Y;
         }
+        // send ball info to server
+        socket.emit("updateBall", {timestamp: currentTimestamp, ball: ball, code: code});
     }
 }
 
 /**
  * Update ball velocity based on position
- * @param {int} timestamp for computing new position regardless of framerate
+ * @param {int} deltaTime for computing new position regardless of framerate
  * @return {boolean} true if point ended (ball hit ground) false otherwise.
  */
-function updateBall(timestamp) {
-    ball.velocityY += -1; // gravity
+function updateBall(deltaTime) {
     if (ball.velocityY < -MAX_VELOCITY_Y) {
         ball.velocityY = -MAX_VELOCITY_Y;
     }
+    
+    ball.x += (ball.velocityX * (deltaTime));
+    ball.y += (ball.velocityY * (deltaTime)) + (0.5 * BALL_GRAVITY * ((deltaTime)*(deltaTime)));
 
-    ball.x += (ball.velocityX * (timestamp-prevTimestamp));
-    ball.y += (ball.velocityY * (timestamp-prevTimestamp));
+    ball.velocityY += (BALL_GRAVITY * (deltaTime)); // gravity
 
     collisionBallSlime(playerSlime);
 
@@ -225,15 +337,25 @@ function updateBall(timestamp) {
 
     // Check for end of point
     if (ball.y < 0) {
-        if (ball.x > 500) {
+        if (!gameStarted) {
+            return true;
+        }
+        // only let loser report score b/c rollback
+        if (ball.x > 500 && !playerSlime.left) {
             leftWon = true;
             scores[0]++;
-        } else {
+            socket.emit('reportScore', {code: code, scores: scores, leftWon: leftWon});
+            initRound(leftWon);
+            //endPoint()
+            return true;
+        } else if (ball.x < 500 && playerSlime.left) {
             leftWon = false;
             scores[1]++;
+            socket.emit('reportScore', {code: code, scores: scores, leftWon: leftWon});
+            initRound(leftWon);
+            //endPoint()
+            return true;
         }
-        //endPoint()
-        return true;
     }
     return false;
 }
@@ -242,28 +364,67 @@ function updateBall(timestamp) {
  * Call all update functions for frame cycle
  */
 function updateFrame(timestamp) {
+    currentTimestamp = timestamp;
     updateSlimeVelocity(playerSlime);
 
     const leftBound = playerSlime.left ? 50 : 555;
     const rightBound = playerSlime.left ? 445 : 950;
 
-    updateSlime(playerSlime, leftBound, rightBound, timestamp);
+    const leftBound2 = playerSlime.left ? 555 : 50;
+    const rightBound2 = playerSlime.left ? 950 : 445;
+    
+    let deltaTime = timestamp - prevTimestamp;
+    updateSlime(playerSlime, leftBound, rightBound, deltaTime);
+    updateSlime(opponentSlime, leftBound2, rightBound2, deltaTime);
 
-    if (updateBall()) {
-        return;
+    if (updateBall(deltaTime)) {
+        if(!gameStarted) {
+            ball.x = playerSlime.left ? 200 : 800;
+            ball.y = 400;
+            ball.velocityX = 0;
+            ball.velocityY = 0;
+        }
+        scoreRedirect();
     }
 
     prevTimestamp = timestamp;
 }
 
-function gameIteration(timestamp) {
+function gameIteration() {
+    let timestamp = Date.now();
     if (!prevTimestamp) {
         prevTimestamp = timestamp;
     }
     updateFrame(timestamp);
     renderGame();
     requestAnimationFrame(gameIteration);
+    poller++;
+    if(poller >= POLL_RATE) {
+        socket.emit("frameUpdate", {timestamp: timestamp, slime: playerSlime, code: code});
+    }
 }
+
+function renderPoints(score, initialX, xDiff, right) {
+    
+    xDiff *= pixelsPerUnitX;
+    ctx.fillStyle = '#ff0';
+    var x = right ? canvas.width - (initialX * pixelsPerUnitX) : (initialX * pixelsPerUnitX);
+    for(var i = 0; i < score; i++) {
+      ctx.beginPath();
+      ctx.arc(x, 100 *pixelsPerUnitY, 12*pixelsPerUnitX, 0, Math.PI * 2);
+      ctx.fill();
+      x += xDiff;
+    }
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 2;
+    x = right ? canvas.width - (initialX * pixelsPerUnitX) : (initialX * pixelsPerUnitX);
+    for(var i = 0; i < WIN_THRESH; i++) {
+      ctx.beginPath();
+      ctx.arc(x, 100 *pixelsPerUnitY, 12*pixelsPerUnitX, 0, Math.PI * 2);
+      ctx.stroke();
+      x += xDiff;
+    }
+  }
 
 /**
  * Render background
@@ -275,6 +436,10 @@ function renderBackground() {
     ctx.fillRect(0,courtYPixels, viewWidth, viewHeight-courtYPixels);
     ctx.fillStyle = "#fff";
     ctx.fillRect(viewWidth / 2 - 2, 7 * viewHeight/10, 4, viewHeight/10+5);
+
+    // render scores
+    renderPoints(scores[0], 30, 40, false);
+    renderPoints(scores[1], 30, -40, true);
 }
 
 /**
@@ -323,22 +488,14 @@ function updateWindowSize(width, height) {
     pixelsPerUnitX = viewWidth/gameWidth;
     pixelsPerUnitY = viewHeight/gameHeight;
     courtYPixels = 4 * viewHeight / 5;
-}
-
-/**
- * Set styling for newly created canvas element
- * @param {CanvasElement} canvas to set style for
- */
-function setupView(canvas) {
-
+    let top = (window.innerHeight - (0.5625*window.innerWidth))/2;
+    canvas.style.top = top;
 }
 
 /**
  * Set up canvas, slimes, etc.
  */
 function bodyload() {
-    let contentDiv = document.getElementById('GameContentDiv');
-
     // Create render objects
     canvas = document.getElementById('canvas');
     canvas.width = window.innerWidth;
@@ -353,29 +510,44 @@ function bodyload() {
     
     nextSlimeIndex = Math.floor(Math.random()*2);
 
-    let playerColor = document.getElementById("player-color").value;
+    let playerColor = "#" + document.getElementById("player-color").value;
     let playerLeft = Boolean(document.getElementById("player-left").value);
     // need slimeLeftColor && playerLeft from hidden html elements, decided in previous screen.
     playerSlime = newSlime(100, playerColor, playerLeft);
     opponentSlime = newSlime(100, "green", !playerLeft);
     ball = newBall(25, "#ff0");
 
+    playerSlime.x = 200;
+    ball.x = 200;
+    ball.y = 356;
+
+    opponentSlime.x = -2000;
+
     skyColor = "#00f";
     groundColor = "#888";
 
-    gameIteration();
+    gameIteration(0);
 }
 
-
-function start() {
-    scores = [0,0];
-    skyColor = "#00f";
-    groundColor = "#888";
+function scoreRedirect() {
+    if (scores[0] >= WIN_THRESH) {
+        if (playerSlime.left) {
+            window.location.replace("/gameover?won=true&close="+code);
+        } else {
+            window.location.replace("/gameover?won=false");
+        }
+    }
+    if (scores[1] >= WIN_THRESH) {
+        if (playerSlime.left) {
+            window.location.replace("/gameover?won=false");
+        } else {
+            window.location.replace("/gameover?won=true&close="+code);
+        }
+    }
 }
 
 window.onresize = function () {
     canvas.width = window.innerWidth;
     canvas.height = canvas.width * 0.5625;
     updateWindowSize(canvas.width, canvas.height);
-    console.log(pixelsPerUnitY);
 }

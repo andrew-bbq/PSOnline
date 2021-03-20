@@ -2,16 +2,21 @@
 
 <head>
     <link rel='stylesheet' href='/stylesheets/style.css' />
-    <script type="text/javascript" src="/javascripts/input.js"></script>
-    <script type="text/javascript" src="/javascripts/game.js"></script>
+    <link rel='stylesheet' href='/stylesheets/gamestyle.css' />
+    
 </head>
 
-<body onload="bodyload()" style="text-align:center;">
-    <input type="hidden" id="player-left" value="true" />
-    <input type="hidden" id="player-color" value="#f00" />
+<body onload="bodyload()" style="text-align:center;" class="game-body">
+    <input type="hidden" id="player-left" value="<%=side%>" />
+    <input type="hidden" id="player-color" value="<%=color%>" />
+    <input type="hidden" id="game-code" value="<%=code%>" />
+    <div id="tophalf"></div>
+    <div id="bottomhalf"></div>
     <div id="ContentDiv" style="position:relative;margin:15px auto;width:750px;">
         <div id="GameContentDiv"><canvas id="canvas"></canvas></div>
     </div>
 </body>
-
+<script src="/socket.io/socket.io.js"></script>
+<script type="text/javascript" src="/javascripts/input.js"></script>
+<script type="text/javascript" src="/javascripts/game.js"></script>
 </html>

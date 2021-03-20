@@ -1,0 +1,32 @@
+#canvas {
+  position: fixed;
+  left: 0;
+}
+
+.game-body {
+  background-color: "#888888";
+  height: 100vh;
+}
+
+html {
+  height: 100%;
+  overflow: hidden;
+}
+
+#tophalf {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 50vh;
+  background-color: blue;
+  width: 100vw;
+}
+
+#bottomhalf {
+  position: fixed;
+  top: 50vh;
+  left: 0;
+  background-color: #888888;
+  height: 50vh;
+  width: 100vw;
+}
