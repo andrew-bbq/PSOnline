@@ -50,6 +50,12 @@ router.get('/game', function(req, res, next) {
 });
 
 router.get('/gameover', function(req, res, next) {
+  if(req.query.close) {
+    const index = games.indexOf(req.query.close);
+    if (index > -1) {
+      games.splice(index, 1);
+    }
+  }
   let won = req.query.won == "true";
   return res.render(won ? "winner" : "loser");
 });

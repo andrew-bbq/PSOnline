@@ -63,13 +63,11 @@ socket.on('joinData', (data) => {
 });
 
 socket.on("requestOpponentColor", (data) => {
-    console.log(data);
     opponentSlime.color = data.color;
     socket.emit('fulfillColorRequest', {code: code, color: playerColor});
 });
 
 socket.on("fulfillColorRequest", (data) => {
-    console.log(data);
     opponentSlime.color = data.color;
 });
 
@@ -530,6 +528,12 @@ function bodyload() {
 }
 
 function scoreRedirect() {
+    if (scores[0] >= WIN_THRESH || scores[1] >= WIN_THRESH) {
+        socket.emit('close', {code: code});
+    }
+}
+
+socket.on('finalclose', (data) => {
     if (scores[0] >= WIN_THRESH) {
         if (playerSlime.left) {
             window.location.replace("/gameover?won=true&close="+code);
@@ -544,7 +548,7 @@ function scoreRedirect() {
             window.location.replace("/gameover?won=true&close="+code);
         }
     }
-}
+});
 
 window.onresize = function () {
     canvas.width = window.innerWidth;
